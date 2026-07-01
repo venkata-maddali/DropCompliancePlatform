@@ -69,10 +69,16 @@ def insert_raw_email(email, deleted=False, opted_out=False, email_hash=None):
 
 
 def update_existing_record_status(email_hash, deleted=False, opted_out=False, cycle_date=None, status=None):
+    update_existing_record_statuses([(email_hash, deleted, opted_out, cycle_date, status)])
+
+
+def update_existing_record_statuses(records):
+    if not records:
+        return
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
+            cursor.executemany(
                 """
                 UPDATE raw_emails
                 SET deleted_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE deleted_at END,
@@ -82,7 +88,10 @@ def update_existing_record_status(email_hash, deleted=False, opted_out=False, cy
                     updated_at = CURRENT_TIMESTAMP
                 WHERE email_hash = %s
                 """,
-                (deleted, opted_out, cycle_date, status, email_hash),
+                [
+                    (deleted, opted_out, cycle_date, status, email_hash)
+                    for email_hash, deleted, opted_out, cycle_date, status in records
+                ],
             )
     finally:
         conn.close()
@@ -117,15 +126,21 @@ def update_run(run_id, **values):
 
 
 def insert_result(run_id, drop_id, status, source_hash):
+    insert_results_batch(run_id, [(drop_id, status, source_hash)])
+
+
+def insert_results_batch(run_id, rows):
+    if not rows:
+        return
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
+            cursor.executemany(
                 """
                 INSERT INTO drop_results (run_id, drop_id, status, source_hash)
                 VALUES (%s, %s, %s, %s)
                 """,
-                (run_id, drop_id, status, source_hash),
+                [(run_id, drop_id, status, source_hash) for drop_id, status, source_hash in rows],
             )
     finally:
         conn.close()

@@ -1,6 +1,6 @@
 import unittest
 
-from drop_compliance_tool.workflow import build_drop_url, hash_email, normalize_hash, resolve_status
+from drop_compliance_tool.workflow import build_drop_url, chunked, hash_email, normalize_hash, resolve_status
 
 
 class WorkflowTests(unittest.TestCase):
@@ -26,6 +26,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(
             normalize_hash('68656c6c6f', mode='base64-unhex'),
             'aGVsbG8=',
+        )
+
+    def test_chunked_splits_items_into_expected_batches(self):
+        self.assertEqual(
+            list(chunked([1, 2, 3, 4, 5], 2)),
+            [[1, 2], [3, 4], [5]],
         )
 
 

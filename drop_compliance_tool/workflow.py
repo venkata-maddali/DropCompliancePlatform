@@ -13,8 +13,8 @@ try:
         fetch_hashes,
         insert_amendment,
         insert_raw_email,
-        insert_result,
-        update_existing_record_status,
+        insert_results_batch,
+        update_existing_record_statuses,
         update_run,
     )
 except ImportError:  # pragma: no cover - allows running as a script
@@ -23,8 +23,8 @@ except ImportError:  # pragma: no cover - allows running as a script
         fetch_hashes,
         insert_amendment,
         insert_raw_email,
-        insert_result,
-        update_existing_record_status,
+        insert_results_batch,
+        update_existing_record_statuses,
         update_run,
     )
 
@@ -88,6 +88,19 @@ def parse_bool(value) -> bool:
     return str(value).strip().lower() in {'1', 'true', 'yes', 'y'}
 
 
+def chunked(iterable, size):
+    if size <= 0:
+        raise ValueError('size must be greater than zero')
+    batch = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 def import_raw_emails(input_csv: str):
     config = get_config()
     with open(input_csv, 'r', encoding='utf-8-sig', newline='') as handle:
@@ -126,7 +139,7 @@ def extract_drop_csv(zip_path: Path, output_dir: Path, cycle_date: str):
         return target_path
 
 
-def process_drop_csv(source_csv: str, run_id: int, output_dir: str, update_existing_records: bool = True, hash_mode: str = 'hex'):
+def process_drop_csv(source_csv: str, run_id: int, output_dir: str, update_existing_records: bool = True, hash_mode: str = 'hex', batch_size: int = 1000):
     hashes = {}
     for item in fetch_hashes():
         record = {'deleted': item['deleted_at'] is not None, 'opted_out': item['opted_out_at'] is not None}
@@ -135,15 +148,19 @@ def process_drop_csv(source_csv: str, run_id: int, output_dir: str, update_exist
                 hashes[candidate] = record
     source_path = Path(source_csv)
     output_path = source_path
-    with open(source_path, 'r', encoding='utf-8-sig', newline='') as handle:
-        rows = list(csv.DictReader(handle))
-    with open(output_path, 'w', encoding='utf-8', newline='') as out_handle:
+    temp_output_path = source_path.with_suffix('.processed.csv')
+    batch_size = max(1, int(batch_size))
+    with open(source_path, 'r', encoding='utf-8-sig', newline='') as handle, open(temp_output_path, 'w', encoding='utf-8', newline='') as out_handle:
+        reader = csv.DictReader(handle)
         writer = csv.DictWriter(out_handle, fieldnames=['DropID', 'Status'])
         writer.writeheader()
         matched = 0
         total = 0
         status_counts = {'deleted': 0, 'opted_out': 0, 'not_found': 0}
-        for row in rows:
+        pending_results = []
+        pending_updates = []
+        pending_rows = []
+        for row in reader:
             total += 1
             drop_id = (row.get('DropID') or '').strip()
             hash_email_value = (row.get('HashEmail') or '').strip()
@@ -155,18 +172,27 @@ def process_drop_csv(source_csv: str, run_id: int, output_dir: str, update_exist
                 matched += 1
                 status = resolve_status(record['deleted'], record['opted_out'])
                 if update_existing_records and status in {'deleted', 'opted_out'}:
-                    update_existing_record_status(
-                        normalized_hash,
-                        deleted=status == 'deleted',
-                        opted_out=status == 'opted_out',
-                        cycle_date=Path(source_path).stem,
-                        status=status,
-                    )
+                    pending_updates.append((normalized_hash, status == 'deleted', status == 'opted_out', source_path.stem, status))
             else:
                 status = 'not_found'
-            writer.writerow({'DropID': drop_id, 'Status': status})
+            pending_rows.append({'DropID': drop_id, 'Status': status})
+            pending_results.append((drop_id, status, hash_email_value))
             status_counts[status] += 1
-            insert_result(run_id, drop_id, status, hash_email_value)
+            if len(pending_results) >= batch_size:
+                writer.writerows(pending_rows)
+                pending_rows.clear()
+                insert_results_batch(run_id, pending_results)
+                pending_results.clear()
+                if pending_updates:
+                    update_existing_record_statuses(pending_updates)
+                    pending_updates.clear()
+        if pending_rows:
+            writer.writerows(pending_rows)
+        if pending_results:
+            insert_results_batch(run_id, pending_results)
+        if pending_updates:
+            update_existing_record_statuses(pending_updates)
+    temp_output_path.replace(output_path)
     return output_path, total, matched, status_counts
 
 
