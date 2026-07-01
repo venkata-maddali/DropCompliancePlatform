@@ -1,0 +1,25 @@
+version: '3.9'
+services:
+  app:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
+    volumes:
+      - ./:/app
+
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-change-me}
+      MYSQL_DATABASE: ${MYSQL_DB:-drop_compliance}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
